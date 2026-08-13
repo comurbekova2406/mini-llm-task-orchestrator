@@ -1,51 +1,53 @@
-# Vinci LLM Orchestrator
+# Mini LLM Task Orchestrator
 
-High-stakes LLM task orchestration for Vinci physics-analysis pipelines: a FastAPI **producer**, PostgreSQL system of record, Redis work queue, horizontally scalable **consumers**, Groq inference, and an industrial control SPA.
+## Overview
 
-## Key features
+This is a small LLM task orchestrator. You submit a prompt, optionally schedule it, and a worker runs one queued job at a time against Groq. Results and status history are stored in Postgres and shown in a simple UI. A task can also chain off a previous one: the parent’s output is prepended to the child’s prompt before the LLM call.
 
-- **Producer–Consumer messaging** — API enqueues work on Redis; workers never poll PostgreSQL for jobs
-- **Context-aware task chaining** — child tasks prepend `parent.result['output']` into the prompt before Groq runs
-- **Groq-backed inference** — real model responses with `output`, `model`, `token_usage`, `latency_ms`
-- **Horizontal scale** — add worker containers to drain `task_queue` in parallel
-- **Operator SPA** — live registry, dashboard KPIs, create + chain flows on port **3001**
+## Architecture / Flow
 
-## Architecture (Producer–Consumer)
+FastAPI is the HTTP layer. Postgres is the system of record for tasks and results. Redis holds a `task_queue` list so creating a task is decoupled from executing it. A separate worker process blocks on `BRPOP` (no database polling), applies chaining and schedule checks, calls Groq, then writes the result back to Postgres. The frontend polls `GET /tasks` for status updates.
 
 ```text
-┌──────────────┐  POST /tasks   ┌─────────────┐  LPUSH id   ┌───────────────┐
-│ Frontend UI  │ ─────────────► │ FastAPI API │ ──────────► │ Redis list    │
-│ :3001        │ ◄─ GET /tasks ─│ + Postgres  │             │ task_queue    │
-└──────────────┘   (poll 5s)    └─────────────┘             └───────┬───────┘
-                                                                    │ BRPOP
-                                                                    ▼
-                                                          ┌─────────────────┐
-                                                          │ Worker × N      │
-                                                          │ chain → Groq    │
-                                                          │ → UPDATE tasks  │
-                                                          └─────────────────┘
+Frontend
+   │  POST /tasks
+   ▼
+FastAPI  ── save row (PENDING) ──► Postgres
+   │
+   │  LPUSH task id
+   ▼
+Redis (task_queue)
+   │  BRPOP
+   ▼
+Worker  ── Groq chat completion ──► Postgres (COMPLETED / FAILED)
+   │
+   ▼
+Frontend polls GET /tasks
 ```
 
-1. **Producer (`app/main.py`)** — Persists a `PENDING` task, then `LPUSH`es the task UUID onto Redis `task_queue`.
-2. **Broker (Redis)** — Durable-enough dispatch list; no DB busy-loop.
-3. **Consumer (`worker_service.py`)** — Blocks on `redis.brpop("task_queue")`, applies chaining rules, calls Groq, writes `COMPLETED` / `FAILED` + JSON result.
-4. **UI** — Polls `http://localhost:8000/tasks` every 5 seconds; **Chain Task** POSTs with `parent_task_id`.
+Default Compose runs one worker, so jobs execute one at a time. Extra workers can share the same Redis list if you scale that service.
 
-## One-click setup (reviewer)
+## What's implemented
+
+- **Task creation** — `POST /tasks` validates input, writes a Postgres row, then `LPUSH`es the task ID onto Redis. If enqueue fails, the row is marked `FAILED` instead of disappearing.
+- **Background execution** — `worker_service.py` consumes `task_queue` via `BRPOP`, sets `RUNNING`, then `COMPLETED` / `FAILED`. Scheduled tasks that are not due yet are requeued.
+- **LLM call** — Groq Python SDK (`GROQ_API_KEY`). Result JSON includes `output`, `model`, `token_usage`, and `latency_ms`. Requests time out after 30s.
+- **Task history** — `GET /tasks` and `GET /tasks/{id}`. The UI lists status pills and opens a detail panel with the stored result.
+- **Task chaining (bonus)** — optional `parent_task_id`. If the parent is still running, the child is requeued. If the parent is missing or failed, the child fails. If the parent completed, `parent.result['output']` is prepended to the child prompt.
+
+## Setup / How to run
 
 ```bash
-# 1) Configure secrets (required for real Groq completions)
 cp backend/.env.example backend/.env
-# Edit backend/.env and set GROQ_API_KEY=<your key from console.groq.com>
+# Edit backend/.env and set GROQ_API_KEY
 # Optional: GROQ_MODEL=llama-3.3-70b-versatile
 
-# 2) Start the stack
 docker compose up --build
 ```
 
 | Service | URL |
 |---------|-----|
-| Control SPA | http://localhost:3001 |
+| UI | http://localhost:3001 |
 | API docs | http://localhost:8000/docs |
 | Health | http://localhost:8000/health |
 | Postgres | localhost:5432 |
@@ -56,7 +58,7 @@ Smoke test:
 ```bash
 curl -s -X POST http://localhost:8000/tasks \
   -H 'Content-Type: application/json' \
-  -d '{"name":"audit-smoke","prompt":"Summarize chamber A lattice drift in two sentences."}' | jq
+  -d '{"name":"smoke","prompt":"Summarize this in one sentence: hello."}' | jq
 
 # Wait a few seconds, then:
 curl -s http://localhost:8000/tasks | jq '.tasks[0] | {name,status,result}'
@@ -68,89 +70,38 @@ Stop:
 docker compose down
 ```
 
-## Scaling to 50+ workers
-
-Workers are stateless consumers of the same Redis list. Redis `BRPOP` hands each task ID to **exactly one** worker.
+Tests (from `backend/`):
 
 ```bash
-docker compose up --build --scale worker=50
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements-dev.txt
+python -m pytest -q
 ```
 
-- Keep a single (or load-balanced) API producer writing to Postgres + Redis
-- Scale only the `worker` service — no code changes
-- Throughput grows roughly with worker count until Groq rate limits or DB write capacity saturate
+## My approach and why
 
-## Context-aware task chaining
+**Redis instead of polling Postgres or using Celery.** A blocking list (`BRPOP`) is the smallest way to decouple “accept the request” from “call the model.” Polling Postgres burns connections and adds delay. Celery would solve the same problem with more moving parts (broker + result backend + workers) than this assignment needs.
 
-When a task has `parent_task_id`:
+**FastAPI instead of Flask or Django.** The API is a handful of CRUD endpoints plus Pydantic schemas that already match the SQLAlchemy model. FastAPI gives typed request/response validation and `/docs` with little extra code. Django’s ORM/admin would be unused weight here.
 
-| Parent state | Child behavior |
-|--------------|----------------|
-| `PENDING` / `RUNNING` | Child returns to `PENDING` and is **requeued** until the parent finishes |
-| Missing / `FAILED` / no `result.output` | Child marked `FAILED` with `"Error: Parent task did not complete successfully."` |
-| `COMPLETED` with `result['output']` | Prompt becomes `Context from previous task: {output}\n\nUser Instruction: {child prompt}` |
+**Requeue-and-check for schedules, not a second scheduler process.** Scheduled tasks still go on the same Redis list. If a worker pops a job whose `scheduled_at` is in the future, it pushes the ID back and waits briefly. That keeps one consumer path for immediate and delayed work. A dedicated scheduler (or Redis delayed queues) would be cleaner at scale; it was not worth a second process for this size.
 
-In the SPA, use **Chain Task** on a completed job — the create form sends `parent_task_id` in the POST body.
+**Chaining waits for the parent instead of requiring it to already be `COMPLETED`.** The UI can enqueue a child as soon as the parent exists. If the parent is still `PENDING`/`RUNNING`, the child is put back on the queue. That matches how a pipeline actually runs. Failing immediately unless the parent is done would force the user to poll and click twice.
 
-## Stack
+## Known limitations / what I'd improve with more time
 
-| Layer | Technology |
-|-------|------------|
-| API | FastAPI + Pydantic + CORS |
-| DB | PostgreSQL 15 + SQLAlchemy 2 |
-| Queue | Redis 7 (`task_queue`) |
-| Worker | `worker_service.py` + Groq Python SDK |
-| Frontend | HTML / Tailwind / Chart.js |
-| Runtime | Docker Compose |
+- No cancel endpoint. Once a job is `RUNNING`, you cannot stop the Groq call.
+- The UI has no search or status filters; it renders the full list.
+- There is a basic stale-task reaper: `RUNNING` rows older than 5 minutes are reset to `PENDING` and re-enqueued. Remaining edge case: a slow-but-alive worker can still be holding the job when the reaper requeues it, so two workers could process the same task. A proper fix needs a `worker_id` / lease column (or compare-and-swap on `updated_at`) so only an expired lease is stolen.
+- Tests are smoke-level (chaining helpers, secret redaction, mocked `POST /tasks`). There are no integration tests against real Redis/Postgres/Groq.
 
-## Project layout
+## API reference
 
-```text
-.
-├── docker-compose.yml
-├── README.md
-├── frontend/                 # SPA (nginx → :3001)
-│   ├── index.html
-│   ├── app.js                # fetch http://localhost:8000/tasks
-│   └── nginx.conf
-└── backend/
-    ├── Dockerfile
-    ├── requirements.txt
-    ├── worker_service.py     # BRPOP consumer
-    ├── .env.example
-    └── app/
-        ├── main.py           # Producer + CORS + enqueue
-        ├── config.py         # GROQ_API_KEY / env settings
-        ├── redis_client.py   # LPUSH / BRPOP helpers
-        ├── chaining.py       # parent.result['output'] merge
-        ├── llm.py            # Groq client
-        ├── models.py
-        ├── schemas.py
-        ├── database.py
-        ├── schema.py
-        └── logging_config.py
-```
+Full schemas live at http://localhost:8000/docs.
 
-## Environment
-
-| Variable | Required | Notes |
-|----------|----------|-------|
-| `GROQ_API_KEY` | Yes (worker) | Loaded via `app/config.py` from `backend/.env`; never commit |
-| `GROQ_MODEL` | No | Default `llama-3.3-70b-versatile` |
-| `DATABASE_URL` | Compose sets | Points at service `db` in Docker |
-| `REDIS_URL` | Compose sets | Points at service `redis` in Docker |
-
-`.env` is gitignored. Use `.env.example` placeholders only.
-
-## API
-
-- `POST /tasks` — create + enqueue (`parent_task_id` optional)
-- `GET /tasks` — list (newest first)
-- `GET /tasks/{id}` — detail + LLM result
-- `GET /health` — API + Redis ping
-
-## Security notes
-
-- API keys never appear in responses, frontend JS, or structured success logs
-- Worker errors are sanitized before persistence
-- CORS allows `http://localhost:3001` (and `*` without credentials) for the SPA
+| Method | Path | Purpose |
+|--------|------|---------|
+| `POST` | `/tasks` | Create a task and enqueue it (`scheduled_at` and `parent_task_id` optional) |
+| `GET` | `/tasks` | List tasks, newest first |
+| `GET` | `/tasks/{id}` | Fetch one task, including LLM `result` |
+| `GET` | `/health` | Liveness plus Redis ping |
