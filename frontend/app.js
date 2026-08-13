@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const API_BASE = window.VINCI_API_BASE || "http://localhost:8000";
+  const API_BASE = window.API_BASE || "http://localhost:8000";
   const POLL_INTERVAL_MS = 5000;
 
   const STATUS_ORDER = ["PENDING", "RUNNING", "COMPLETED", "FAILED"];

@@ -1,5 +1,5 @@
 """
-Vinci task worker — Redis consumer.
+Task worker — Redis consumer.
 
 Blocks on `task_queue` via BRPOP, processes one task at a time per process,
 and writes results back to PostgreSQL. Scale horizontally by running many

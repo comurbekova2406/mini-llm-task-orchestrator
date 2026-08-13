@@ -1,4 +1,4 @@
-"""Centralized environment configuration for the Vinci orchestrator."""
+"""Centralized environment configuration for the task orchestrator."""
 
 from __future__ import annotations
 

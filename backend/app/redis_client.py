@@ -1,4 +1,4 @@
-"""Redis connection helpers for the Vinci task queue."""
+"""Redis connection helpers for the task queue."""
 
 from __future__ import annotations
 

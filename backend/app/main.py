@@ -1,4 +1,4 @@
-"""FastAPI entrypoint — producer side of the Vinci task orchestrator."""
+"""FastAPI entrypoint — producer side of the LLM task orchestrator."""
 
 from __future__ import annotations
 
@@ -37,9 +37,9 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(
-    title="Vinci LLM Orchestrator",
+    title="LLM Task Orchestrator",
     description=(
-        "Producer API for Vinci LLM tasks. Persists jobs in PostgreSQL and "
+        "Producer API for LLM tasks. Persists jobs in PostgreSQL and "
         "enqueues work onto Redis for horizontal worker consumers."
     ),
     version="0.2.0",

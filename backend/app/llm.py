@@ -1,4 +1,4 @@
-"""Groq-backed LLM execution for Vinci task processing."""
+"""Groq-backed LLM execution for task processing."""
 
 from __future__ import annotations
 
@@ -14,8 +14,7 @@ from app.config import ConfigurationError, settings
 logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = (
-    "You are Vinci's physics-analysis assistant. Provide clear, precise "
-    "technical analysis suitable for a high-stakes simulation pipeline."
+    "You are a helpful assistant. Provide clear, precise responses to the user's request."
 )
 
 
@@ -45,7 +44,7 @@ def sanitize_error_message(message: str) -> str:
 
 def execute_llm(prompt: str) -> dict[str, Any]:
     """
-    Call Groq chat completions and return Vinci result metadata.
+    Call Groq chat completions and return result metadata.
 
     Returns:
         dict with keys: output, model, token_usage, latency_ms
