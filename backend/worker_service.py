@@ -12,8 +12,11 @@ import logging
 import signal
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from uuid import UUID
+
+from redis import Redis
+from sqlalchemy.orm import Session
 
 from app.chaining import (
     PARENT_FAILURE_MESSAGE,
@@ -32,6 +35,8 @@ configure_logging()
 logger = logging.getLogger("worker")
 
 _shutdown = False
+STALE_AFTER_SECONDS = 300
+REAP_INTERVAL_SECONDS = 60
 
 
 def _handle_signal(signum: int, _frame: object) -> None:
@@ -41,6 +46,38 @@ def _handle_signal(signum: int, _frame: object) -> None:
         extra={"event": "shutdown_signal", "status": str(signum)},
     )
     _shutdown = True
+
+
+def reap_stale_tasks(
+    db: Session,
+    redis_client: Redis,
+    stale_after_seconds: int = 300,
+) -> int:
+    """
+    Recover tasks stuck in RUNNING longer than stale_after_seconds.
+
+    Resets each match to PENDING, clears result, and re-enqueues the task ID.
+    """
+    cutoff = datetime.now(timezone.utc) - timedelta(seconds=stale_after_seconds)
+    stale_tasks = (
+        db.query(Task)
+        .filter(Task.status == TaskStatus.RUNNING)
+        .filter(Task.updated_at < cutoff)
+        .all()
+    )
+    recovered = 0
+    for task in stale_tasks:
+        task.status = TaskStatus.PENDING
+        task.result = None
+        task.updated_at = datetime.now(timezone.utc)
+        db.commit()
+        enqueue_task(str(task.id), client=redis_client)
+        logger.warning(
+            "Recovered stale running task",
+            extra={"task_id": str(task.id), "event": "stale_reap", "status": "PENDING"},
+        )
+        recovered += 1
+    return recovered
 
 
 def process_task(task_id: str) -> None:
@@ -176,8 +213,22 @@ def run_worker() -> None:
     redis_client.ping()
     logger.info("Worker started", extra={"event": "startup", "queue": "task_queue"})
 
+    last_reap_at = time.monotonic()
     while not _shutdown:
         try:
+            now = time.monotonic()
+            if now - last_reap_at >= REAP_INTERVAL_SECONDS:
+                db = SessionLocal()
+                try:
+                    reap_stale_tasks(
+                        db,
+                        redis_client,
+                        stale_after_seconds=STALE_AFTER_SECONDS,
+                    )
+                finally:
+                    db.close()
+                last_reap_at = time.monotonic()
+
             task_id = brpop_task(timeout=5, client=redis_client)
             if task_id is None:
                 continue

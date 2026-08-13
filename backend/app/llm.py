@@ -7,7 +7,7 @@ import re
 import time
 from typing import Any
 
-from groq import APIError, AuthenticationError, Groq, RateLimitError
+from groq import APIError, APITimeoutError, AuthenticationError, Groq, RateLimitError
 
 from app.config import ConfigurationError, settings
 
@@ -30,9 +30,14 @@ class LLMExecutionError(Exception):
 def sanitize_error_message(message: str) -> str:
     """Strip secrets from error strings before logging or persisting."""
     redacted = re.sub(
+        r"(?i)authorization\s*[:=]\s*bearer\s+\S+",
+        "Authorization: Bearer [REDACTED]",
+        message,
+    )
+    redacted = re.sub(
         r"(?i)(api[_-]?key|authorization|bearer)\s*[:=]\s*\S+",
         r"\1=[REDACTED]",
-        message,
+        redacted,
     )
     redacted = re.sub(r"gsk_[A-Za-z0-9]+", "[REDACTED]", redacted)
     return redacted
@@ -62,7 +67,14 @@ def execute_llm(prompt: str) -> dict[str, Any]:
                 {"role": "user", "content": prompt},
             ],
             temperature=0.2,
+            timeout=30,
         )
+    except APITimeoutError as exc:
+        logger.error(
+            "Groq request timed out",
+            extra={"event": "llm_timeout", "status": "FAILED"},
+        )
+        raise LLMExecutionError("Groq request timed out after 30s") from exc
     except AuthenticationError as exc:
         logger.error(
             "Groq authentication failed",

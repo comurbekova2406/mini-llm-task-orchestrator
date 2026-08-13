@@ -101,7 +101,19 @@ def create_task(
     db.commit()
     db.refresh(task)
 
-    enqueue_task(str(task.id), client=redis_client)
+    try:
+        enqueue_task(str(task.id), client=redis_client)
+    except Exception:  # noqa: BLE001 - persist an honest FAILED status instead of 500
+        logger.exception(
+            "Failed to enqueue task on Redis",
+            extra={"task_id": str(task.id), "event": "enqueue_failed", "status": "FAILED"},
+        )
+        task.status = TaskStatus.FAILED
+        task.result = {"error": "Failed to enqueue task on Redis"}
+        db.commit()
+        db.refresh(task)
+        return task
+
     logger.info(
         "Task created and enqueued",
         extra={"task_id": str(task.id), "event": "create", "status": task.status.value},
