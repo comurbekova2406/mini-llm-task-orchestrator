@@ -22,3 +22,9 @@ postgres_data/
 .pytest_cache/
 .coverage
 htmlcov/
+
+# Node / Next.js
+node_modules/
+.next/
+frontend/.next/
+frontend/node_modules/

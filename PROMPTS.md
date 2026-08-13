@@ -205,3 +205,57 @@ The base implementation was built first (API, Postgres, UI, chaining, Redis work
 **Files changed:**
 
 - `PROMPTS.md`
+
+## Prompt 10: Port frontend to Next.js
+
+**Why:** The assignment's Technical Expectations required React/Next.js for the frontend; the original vanilla JS + nginx SPA did not meet that, so this was a compliance fix.
+
+**Prompt:**
+
+> Convert the frontend from vanilla JS + nginx to a minimal Next.js app. Keep every existing feature and the same visual design — this is a framework port, not a redesign.
+>
+> Requirements:
+>
+> 1. Scaffold a minimal Next.js app in frontend/ (App Router, no TypeScript needed unless it's trivial to add, keep it simple)
+>    - Use Tailwind (proper Tailwind setup via postcss, replacing the CDN `<script>` tag currently in index.html)
+>    - Move fonts (Inter, IBM Plex Mono) into next/font or a standard `<link>` in the root layout
+>
+> 2. Port every feature currently in app.js and index.html into React components with equivalent behavior:
+>    - Create-task form: name, prompt, immediate vs scheduled toggle, optional parent_task_id for chaining
+>    - Task list/registry view with status pills
+>    - Dashboard with KPIs and the latency/status charts (keep Chart.js, or swap to a React-friendly equivalent like recharts if that's cleaner — your call, just preserve the same charts)
+>    - Task detail slide-over panel showing prompt, result, model, tokens, latency
+>    - Polling GET /tasks every 5 seconds (use useEffect + setInterval, or a simple polling hook)
+>    - "Chain Task" flow — using a completed task's output to prefill a new task's parent_task_id
+>    - Toast notifications and form validation error states exactly as they currently behave
+>
+> 3. Replace window.API_BASE with a Next.js environment variable (NEXT_PUBLIC_API_BASE), defaulting to http://localhost:8000 if unset
+>
+> 4. Update the Docker setup:
+>    - Replace frontend/nginx.conf and the current static-serving approach with a proper Next.js Dockerfile (multi-stage build: install deps, build, run `next start` or use `next build && next export` if a static export fits better given no server-side needs)
+>    - Update docker-compose.yml's frontend service accordingly (build context, port mapping, env vars)
+>
+> 5. Delete the old app.js, index.html, and nginx.conf once the Next.js version fully replaces them — don't leave both versions in the repo
+>
+> After the frontend port is done:
+>
+> 6. Update README.md:
+>    - In "What's implemented" and the architecture flow, change references to the old vanilla JS frontend to Next.js
+>    - Update the "Stack" table: change Frontend row to Next.js (App Router) + Tailwind + React
+>    - Update "Setup / How to run" if the docker-compose command or ports changed
+>    - In "Known limitations," remove any note that implied a framework deviation, since this is now fixed
+>
+> 7. Update PROMPTS.md:
+>    - Add a new entry documenting this change, following the same format as the existing entries (why it was needed, the prompt used — this exact prompt, verbatim — and files changed)
+>    - Note the "why": the assignment's Technical Expectations explicitly required React/Next.js for the frontend, and the original vanilla JS implementation didn't meet that, so this was a compliance fix
+>
+> Show me the resulting file structure when done so I can confirm nothing from the old frontend was left behind.
+
+**Files changed:**
+
+- Added `frontend/` Next.js app (`app/`, `components/`, `lib/`, `package.json`, `Dockerfile`, Tailwind/PostCSS config)
+- `docker-compose.yml` (frontend service now builds Next.js, port 3001→3000)
+- `.gitignore` (node_modules / `.next`)
+- `README.md`
+- `PROMPTS.md`
+- Deleted `frontend/index.html`, `frontend/app.js`, `frontend/nginx.conf`

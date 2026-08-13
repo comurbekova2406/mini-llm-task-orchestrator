@@ -6,10 +6,10 @@ This is a small LLM task orchestrator. You submit a prompt, optionally schedule 
 
 ## Architecture / Flow
 
-FastAPI is the HTTP layer. Postgres is the system of record for tasks and results. Redis holds a `task_queue` list so creating a task is decoupled from executing it. A separate worker process blocks on `BRPOP` (no database polling), applies chaining and schedule checks, calls Groq, then writes the result back to Postgres. The frontend polls `GET /tasks` for status updates.
+FastAPI is the HTTP layer. Postgres is the system of record for tasks and results. Redis holds a `task_queue` list so creating a task is decoupled from executing it. A separate worker process blocks on `BRPOP` (no database polling), applies chaining and schedule checks, calls Groq, then writes the result back to Postgres. The Next.js UI polls `GET /tasks` every 5 seconds for status updates.
 
 ```text
-Frontend
+Next.js UI
    │  POST /tasks
    ▼
 FastAPI  ── save row (PENDING) ──► Postgres
@@ -22,8 +22,16 @@ Redis (task_queue)
 Worker  ── Groq chat completion ──► Postgres (COMPLETED / FAILED)
    │
    ▼
-Frontend polls GET /tasks
+Next.js polls GET /tasks
 ```
+
+| Layer | Technology |
+|-------|------------|
+| Frontend | Next.js (App Router) + Tailwind + React |
+| API | FastAPI + Pydantic |
+| DB | PostgreSQL 15 + SQLAlchemy 2 |
+| Queue | Redis 7 (`task_queue`) |
+| Worker | Python + Groq SDK |
 
 Default Compose runs one worker, so jobs execute one at a time. Extra workers can share the same Redis list if you scale that service.
 
@@ -32,8 +40,9 @@ Default Compose runs one worker, so jobs execute one at a time. Extra workers ca
 - **Task creation** — `POST /tasks` validates input, writes a Postgres row, then `LPUSH`es the task ID onto Redis. If enqueue fails, the row is marked `FAILED` instead of disappearing.
 - **Background execution** — `worker_service.py` consumes `task_queue` via `BRPOP`, sets `RUNNING`, then `COMPLETED` / `FAILED`. Scheduled tasks that are not due yet are requeued.
 - **LLM call** — Groq Python SDK (`GROQ_API_KEY`). Result JSON includes `output`, `model`, `token_usage`, and `latency_ms`. Requests time out after 30s.
-- **Task history** — `GET /tasks` and `GET /tasks/{id}`. The UI lists status pills and opens a detail panel with the stored result.
+- **Task history** — `GET /tasks` and `GET /tasks/{id}`. The Next.js UI lists status pills and opens a detail panel with the stored result.
 - **Task chaining (bonus)** — optional `parent_task_id`. If the parent is still running, the child is requeued. If the parent is missing or failed, the child fails. If the parent completed, `parent.result['output']` is prepended to the child prompt.
+- **Frontend** — Next.js App Router SPA: dashboard (KPIs + Chart.js), registry, create form, 5s polling, chain-task flow.
 
 ## Setup / How to run
 
