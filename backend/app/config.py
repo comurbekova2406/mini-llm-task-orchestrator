@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-DEFAULT_GROQ_MODEL = "llama-3.3-70b-versatile"
+DEFAULT_GROQ_MODEL = None
 DEFAULT_REDIS_URL = "redis://localhost:6379/0"
 DEFAULT_DATABASE_URL = (
     "postgresql+psycopg2://orchestrator:orchestrator@localhost:5432/orchestrator"
@@ -46,7 +46,13 @@ class Settings:
 def load_settings() -> Settings:
     """Load settings from environment variables."""
     groq_key = os.getenv("GROQ_API_KEY", "").strip() or None
-    groq_model = os.getenv("GROQ_MODEL", DEFAULT_GROQ_MODEL).strip() or DEFAULT_GROQ_MODEL
+    groq_model = os.getenv("GROQ_MODEL", "").strip() or None
+
+    if not groq_model:
+       raise ConfigurationError(
+          "GROQ_MODEL is missing. Add it to backend/.env "
+          "(see backend/.env.example) and restart the worker."
+    )
     return Settings(
         database_url=os.getenv("DATABASE_URL", DEFAULT_DATABASE_URL),
         redis_url=os.getenv("REDIS_URL", DEFAULT_REDIS_URL),
