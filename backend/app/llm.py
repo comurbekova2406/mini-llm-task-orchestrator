@@ -9,7 +9,7 @@ from typing import Any
 
 from groq import APIError, APITimeoutError, AuthenticationError, Groq, RateLimitError
 
-from app.config import ConfigurationError, settings
+from app.config import ConfigurationError, get_groq_model, settings
 
 logger = logging.getLogger(__name__)
 
@@ -51,10 +51,10 @@ def execute_llm(prompt: str) -> dict[str, Any]:
     """
     try:
         api_key = settings.require_groq_api_key()
+        model = get_groq_model()
     except ConfigurationError as exc:
         raise LLMConfigurationError(str(exc)) from exc
 
-    model = settings.groq_model
     client = Groq(api_key=api_key)
 
     started = time.perf_counter()

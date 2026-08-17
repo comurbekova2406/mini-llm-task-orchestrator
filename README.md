@@ -39,20 +39,25 @@ Default Compose runs one worker, so jobs execute one at a time. Extra workers ca
 
 - **Task creation** — `POST /tasks` validates input, writes a Postgres row, then `LPUSH`es the task ID onto Redis. If enqueue fails, the row is marked `FAILED` instead of disappearing.
 - **Background execution** — `worker_service.py` consumes `task_queue` via `BRPOP`, sets `RUNNING`, then `COMPLETED` / `FAILED`. Scheduled tasks that are not due yet are requeued.
-- **LLM call** — Groq Python SDK (`GROQ_API_KEY`). Result JSON includes `output`, `model`, `token_usage`, and `latency_ms`. Requests time out after 30s.
+- **LLM call** — Groq Python SDK. `GROQ_API_KEY` and `GROQ_MODEL` are loaded from environment configuration rather than hardcoded in application code. Result JSON includes `output`, `model`, `token_usage`, and `latency_ms`. Requests time out after 30s.
 - **Task history** — `GET /tasks` and `GET /tasks/{id}`. The Next.js UI lists status pills and opens a detail panel with the stored result.
 - **Task chaining (bonus)** — optional `parent_task_id`. If the parent is still running, the child is requeued. If the parent is missing or failed, the child fails. If the parent completed, `parent.result['output']` is prepended to the child prompt.
 - **Frontend** — Next.js App Router SPA: dashboard (KPIs + Chart.js), registry, create form, 5s polling, chain-task flow.
 
 ## Setup / How to run
 
-```bash
 cp backend/.env.example backend/.env
 # Edit backend/.env and set GROQ_API_KEY
-# Optional: GROQ_MODEL=llama-3.3-70b-versatile
+# Required: GROQ_MODEL=<any currently supported Groq model id>
+# See https://console.groq.com/docs/models for the current list.
+# GROQ_MODEL is read fresh from the environment on every LLM call, so if
+# Groq deprecates a model, just update this value and restart the worker —
+# no code changes needed.
 
 docker compose up --build
 ```
+> Keep `backend/.env` local and never commit real API keys. The repository contains only placeholder values in `backend/.env.example`.
+
 
 | Service | URL |
 |---------|-----|

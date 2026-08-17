@@ -27,7 +27,6 @@ class Settings:
     database_url: str
     redis_url: str
     groq_api_key: str | None
-    groq_model: str
 
     def require_groq_api_key(self) -> str:
         """
@@ -46,19 +45,28 @@ class Settings:
 def load_settings() -> Settings:
     """Load settings from environment variables."""
     groq_key = os.getenv("GROQ_API_KEY", "").strip() or None
-    groq_model = os.getenv("GROQ_MODEL", "").strip() or None
 
-    if not groq_model:
-       raise ConfigurationError(
-          "GROQ_MODEL is missing. Add it to backend/.env "
-          "(see backend/.env.example) and restart the worker."
-    )
     return Settings(
         database_url=os.getenv("DATABASE_URL", DEFAULT_DATABASE_URL),
         redis_url=os.getenv("REDIS_URL", DEFAULT_REDIS_URL),
         groq_api_key=groq_key,
-        groq_model=groq_model,
     )
 
+
+def get_groq_model() -> str:
+    """
+    Read GROQ_MODEL from the environment on every call.
+
+    This is intentionally NOT cached on Settings, so changing GROQ_MODEL
+    in the environment takes effect on the next LLM call without needing
+    to restart the process.
+    """
+    model = os.getenv("GROQ_MODEL", "").strip()
+    if not model:
+        raise ConfigurationError(
+            "GROQ_MODEL is missing. Add it to backend/.env "
+            "(see backend/.env.example) or set it in the environment."
+        )
+    return model
 
 settings: Settings = load_settings()
