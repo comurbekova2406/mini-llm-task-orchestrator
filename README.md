@@ -46,6 +46,8 @@ Default Compose runs one worker, so jobs execute one at a time. Extra workers ca
 
 ## Setup / How to run
 
+```bash
+
 cp backend/.env.example backend/.env
 # Edit backend/.env and set GROQ_API_KEY
 # Required: GROQ_MODEL=<any currently supported Groq model id>
